@@ -9,3 +9,5 @@ services:
     envVars:
       - key: PORT
         value: 10000
+      - key: FFMPEG_PATH
+        value: ffmpeg

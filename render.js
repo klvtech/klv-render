@@ -8,9 +8,25 @@ import ffmpegPath from 'ffmpeg-static'
 import { salvarVideoNoDrive } from './lib/drive.js'
 
 const execFileP = promisify(execFile)
+const ffmpegBin = process.env.FFMPEG_PATH || ffmpegPath
 const FPS = 30
 const FADE = 0.5
 const TITULO_DUR = 2.5
+
+export async function getFfmpegInfo() {
+  try {
+    const { stdout: v } = await execFileP(ffmpegBin, ['-version'])
+    const { stdout: f } = await execFileP(ffmpegBin, ['-filters'])
+    return {
+      ok: true,
+      bin: ffmpegBin,
+      versao: String(v).split('\n')[0],
+      drawtext: /drawtext/.test(f),
+    }
+  } catch (e) {
+    return { ok: false, bin: ffmpegBin, erro: String((e && e.stderr) || e) }
+  }
+}
 
 const FORMATOS = {
   '9:16': { w: 720, h: 1280 },
@@ -82,7 +98,7 @@ function base64ParaArquivo(dataUrl, destino) {
 
 async function duracaoAudio(arquivo) {
   try {
-    const { stderr } = await execFileP(ffmpegPath, ['-i', arquivo, '-f', 'null', '-'])
+    const { stderr } = await execFileP(ffmpegBin, ['-i', arquivo, '-f', 'null', '-'])
     const m = /Duration: (\d+):(\d+):(\d+\.\d+)/.exec(stderr)
     if (m) return Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3])
   } catch {}
@@ -306,7 +322,7 @@ export async function renderProjeto(body) {
       saida,
     ]
 
-    const { stderr } = await execFileP(ffmpegPath, args, { maxBuffer: 50 * 1024 * 1024 })
+    const { stderr } = await execFileP(ffmpegBin, args, { maxBuffer: 50 * 1024 * 1024 })
     const ultima = (stderr || '').split('\n').filter((l) => l.includes('frame=')).pop() || ''
 
     // --- Envia pro Drive ---

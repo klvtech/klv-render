@@ -1,13 +1,13 @@
 import express from 'express'
 import cors from 'cors'
-import { renderProjeto } from './render.js'
+import { renderProjeto, getFfmpegInfo } from './render.js'
 
 const app = express()
 app.use(cors())
 app.use(express.json({ limit: '80mb' }))
 
-app.get('/health', (req, res) => {
-  res.json({ ok: true, nome: 'klv-render' })
+app.get('/health', async (req, res) => {
+  res.json({ ok: true, nome: 'klv-render', ffmpeg: await getFfmpegInfo() })
 })
 
 app.post('/render', async (req, res) => {
