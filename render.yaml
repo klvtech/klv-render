@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: klv-render
+    runtime: node
+    plan: free
+    buildCommand: npm install && node node_modules/ffmpeg-static/install.js
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: 10000

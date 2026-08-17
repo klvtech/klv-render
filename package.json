@@ -1,0 +1,17 @@
+{
+  "name": "klv-render",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Serviço de renderização de vídeos (ffmpeg) para o klv-marketing",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18 <21"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "ffmpeg-static": "^5.2.0"
+  }
+}
