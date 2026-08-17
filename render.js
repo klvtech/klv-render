@@ -8,10 +8,22 @@ import ffmpegPath from 'ffmpeg-static'
 import { salvarVideoNoDrive } from './lib/drive.js'
 
 const execFileP = promisify(execFile)
-const ffmpegBin = process.env.FFMPEG_PATH || ffmpegPath
 const FPS = 30
 const FADE = 0.5
 const TITULO_DUR = 2.5
+
+async function detectFfmpegBin() {
+  const candidatos = [process.env.FFMPEG_PATH, 'ffmpeg', ffmpegPath].filter(Boolean)
+  for (const bin of candidatos) {
+    try {
+      const { stdout } = await execFileP(bin, ['-filters'])
+      if (/drawtext/.test(String(stdout))) return bin
+    } catch {}
+  }
+  return ffmpegPath
+}
+
+const ffmpegBin = await detectFfmpegBin()
 
 export async function getFfmpegInfo() {
   try {
