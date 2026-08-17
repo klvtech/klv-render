@@ -178,26 +178,29 @@ export async function renderProjeto(body) {
       const c1 = hex(m.grad?.[1] || '#334155')
       fc.push(`gradients=s=${W}x${H}:c0=${c0}:c1=${c1}:d=${tituloDur}:r=${FPS}[gt0]`)
 
-      let titleChain = '[gt0]'
-      const extras = []
+      const titleFilters = []
       const titulo = projeto.titulo
       if (titulo) {
         const linhas = quebrarLinhas(titulo, Math.floor((W - 120) / (tituloSize * 0.62)))
         const lh = tituloSize * 1.35
         const startY = H / 2 - (linhas.length * lh) / 2
-        titleChain += `drawtext=fontfile=${escF(fonteBold)}:text=${escF(linhas.join('\n'))}:fontsize=${tituloSize}:fontcolor=white:line_spacing=${Math.round(lh)}:x=(w-text_w)/2:y=${Math.round(startY)}`
+        titleFilters.push(
+          `drawtext=fontfile=${escF(fonteBold)}:text=${escF(linhas.join('\n'))}:fontsize=${tituloSize}:fontcolor=white:line_spacing=${Math.round(lh)}:x=(w-text_w)/2:y=${Math.round(startY)}`
+        )
         if (barraTitulo) {
           const bl = Math.min(220, W * 0.5)
-          extras.push(
+          titleFilters.push(
             `drawbox=x=${Math.round(W / 2 - bl / 2)}:y=${Math.round(startY + linhas.length * lh + 24)}:w=${Math.round(bl)}:h=6:color=${corParaFfmpeg(m.accent)}:t=fill`
           )
         }
         if (projeto.subtitulo) {
           const subY = startY + linhas.length * lh + (barraTitulo ? 66 : 44)
-          titleChain += `,drawtext=fontfile=${escF(fonteNormal)}:text=${escF(String(projeto.subtitulo))}:fontsize=${subSize}:fontcolor=${corParaFfmpeg(m.subCor || '#cbd5e1')}:x=(w-text_w)/2:y=${Math.round(subY)}`
+          titleFilters.push(
+            `drawtext=fontfile=${escF(fonteNormal)}:text=${escF(String(projeto.subtitulo))}:fontsize=${subSize}:fontcolor=${corParaFfmpeg(m.subCor || '#cbd5e1')}:x=(w-text_w)/2:y=${Math.round(subY)}`
+          )
         }
       }
-      fc.push(titleChain + (extras.length ? ',' + extras.join(',') : '') + `,format=yuv420p[titlev]`)
+      fc.push('[gt0]' + (titleFilters.length ? titleFilters.join(',') + ',' : '') + 'format=yuv420p[titlev]')
       mapaV.push('[titlev]')
     }
 
@@ -216,7 +219,6 @@ export async function renderProjeto(body) {
     fc.push(`${mapaV.join('')}concat=n=${mapaV.length}:v=1:a=0[allv]`)
 
     // --- Decorações sobre o vídeo todo ---
-    let deco = '[allv]'
     const decoChain = []
     if (letterbox) {
       const barraH = Math.round(H * 0.13)
@@ -245,7 +247,7 @@ export async function renderProjeto(body) {
       decoChain.push(`drawbox=x=0:y=${H - pbH}:w=${W}:h=${pbH}:color=white@0.25:t=fill`)
       decoChain.push(`drawbox=x=0:y=${H - pbH}:w='in_w*t/${total}':h=${pbH}:color=${corParaFfmpeg(m.accent)}:t=fill`)
     }
-    fc.push(deco + decoChain.join(',') + `,format=yuv420p[finalv]`)
+    fc.push('[allv]' + (decoChain.length ? decoChain.join(',') + ',' : '') + 'format=yuv420p[finalv]')
 
     // --- Áudio ---
     const mapArgs = ['-map', '[finalv]']
