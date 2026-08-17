@@ -151,7 +151,7 @@ export async function renderProjeto(body) {
     // 5) Duração total
     const tituloDur = projeto.tituloSlide !== false ? TITULO_DUR : 0
     const n = fotos.length
-    const base = tituloDur + n * segundosFoto - (n - 1) * FADE
+    const base = tituloDur + n * segundosFoto
     const total = Math.max(base, narrDur > 0 ? narrDur + 1 : 0, musDur)
 
     // 6) Fontes
@@ -200,17 +200,19 @@ export async function renderProjeto(body) {
           )
         }
       }
-      fc.push('[gt0]' + (titleFilters.length ? titleFilters.join(',') + ',' : '') + 'format=yuv420p[titlev]')
+      fc.push('[gt0]' + (titleFilters.length ? titleFilters.join(',') + ',' : '') + `fade=t=out:st=${Math.max(0, tituloDur - 0.5)}:d=0.5,format=yuv420p[titlev]`)
       mapaV.push('[titlev]')
     }
 
     // --- Fotos com zoom ---
     const durFrames = Math.round(segundosFoto * FPS)
+    const fadeIn = 0.35
+    const fadeOut = 0.35
     for (let i = 0; i < n; i++) {
       const escala = modo === 'cobrir' ? 'increase' : 'decrease'
       let chain = `[${i}:v]scale=${W * 2}:${H * 2}:force_original_aspect_ratio=${escala},setsar=1`
       if (modo === 'caber') chain += `,pad=${W * 2}:${H * 2}:(ow-iw)/2:(oh-ih)/2:black`
-      chain += `,crop=${W}:${H},zoompan=z='${montarZ(zoom, durFrames)}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${durFrames}:s=${W}x${H}:fps=${FPS},trim=duration=${segundosFoto},setpts=PTS-STARTPTS,format=yuv420p[v${i}]`
+      chain += `,crop=${W}:${H},zoompan=z='${montarZ(zoom, durFrames)}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${durFrames}:s=${W}x${H}:fps=${FPS},trim=duration=${segundosFoto},setpts=PTS-STARTPTS,fade=t=in:st=0:d=${fadeIn},fade=t=out:st=${Math.max(0, segundosFoto - fadeOut)}:d=${fadeOut},format=yuv420p[v${i}]`
       fc.push(chain)
       mapaV.push(`[v${i}]`)
     }
@@ -225,10 +227,12 @@ export async function renderProjeto(body) {
       decoChain.push(`drawbox=x=0:y=0:w=${W}:h=${barraH}:color=black:t=fill`)
       decoChain.push(`drawbox=x=0:y=${H - barraH}:w=${W}:h=${barraH}:color=black:t=fill`)
     }
-    if (projeto.mostrarTexto !== false && projeto.legenda) {
+
+    function montarCaption(texto, start, end, fadeDur = 0.35) {
+      if (!texto) return []
       const pad = 24
       const lh = Math.round(textoSize * 1.3)
-      const linhas = quebrarLinhas(projeto.legenda, Math.floor((W - 90) / (textoSize * 0.62)))
+      const linhas = quebrarLinhas(texto, Math.floor((W - 90) / (textoSize * 0.62)))
       const boxH = linhas.length * lh + pad * 2
       let boxY
       if (letterbox) {
@@ -237,10 +241,25 @@ export async function renderProjeto(body) {
       } else {
         boxY = H - boxH - 46
       }
-      decoChain.push(`drawbox=x=45:y=${boxY}:w=${W - 90}:h=${boxH}:color=${corParaFfmpeg(m.captionBg || 'rgba(0,0,0,0.7)')}:t=fill`)
-      decoChain.push(
-        `drawtext=fontfile=${escF(fonteBold)}:text=${escF(linhas.join('\n'))}:fontsize=${textoSize}:fontcolor=${corParaFfmpeg(m.captionCor || '#ffffff')}:line_spacing=${lh}:x=(w-text_w)/2:y=${Math.round(boxY + pad + textoSize * 0.36)}:enable='between(t,${tituloDur},${total})'`
-      )
+      const en = `enable='between(t,${start},${end})'`
+      const alpha = `alpha='if(lt(t,${start + fadeDur}),0,min(1,(t-${start})/${fadeDur}))'`
+      return [
+        `drawbox=x=45:y=${boxY}:w=${W - 90}:h=${boxH}:color=${corParaFfmpeg(m.captionBg || 'rgba(0,0,0,0.7)')}:t=fill:${en}`,
+        `drawtext=fontfile=${escF(fonteBold)}:text=${escF(linhas.join('\n'))}:fontsize=${textoSize}:fontcolor=${corParaFfmpeg(m.captionCor || '#ffffff')}:line_spacing=${lh}:x=(w-text_w)/2:y=${Math.round(boxY + pad + textoSize * 0.36)}:${alpha}:${en}`,
+      ]
+    }
+
+    if (projeto.mostrarTexto !== false) {
+      const slides = Array.isArray(projeto.slides) ? projeto.slides : []
+      if (slides.length > 0) {
+        for (let i = 0; i < n; i++) {
+          const start = tituloDur + i * segundosFoto
+          const end = start + segundosFoto
+          decoChain.push(...montarCaption(slides[i] || '', start, end))
+        }
+      } else if (projeto.legenda) {
+        decoChain.push(...montarCaption(projeto.legenda, tituloDur, total))
+      }
     }
     if (progressBar) {
       const pbH = 8
