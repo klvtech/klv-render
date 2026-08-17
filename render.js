@@ -117,9 +117,46 @@ async function duracaoAudio(arquivo) {
   return 0
 }
 
-function montarZ(zoomNome, durFrames) {
+function montarMotion(zoomNome, durFrames, i) {
   const zmax = zoomNome === 'rapido' ? 0.18 : zoomNome === 'lento' ? 0.06 : 0.12
-  return `min(1+${zmax}*on/${Math.max(1, durFrames - 1)},1.5)`
+  const centro = {
+    x: 'iw/2-(iw/zoom/2)',
+    y: 'ih/2-(ih/zoom/2)',
+  }
+  const D = Math.max(1, durFrames - 1)
+  const ciclo = ['in', 'out', 'pan-r', 'pan-l', 'in', 'pan-u', 'pan-d']
+  const modo = ciclo[i % ciclo.length]
+  if (modo === 'out') {
+    return { z: `max(1.5-${zmax}*on/${D},1)`, ...centro }
+  }
+  if (modo === 'pan-r') {
+    return { z: '1.35', x: `(iw-iw/zoom)*(on/${D})`, y: centro.y }
+  }
+  if (modo === 'pan-l') {
+    return { z: '1.35', x: `(iw-iw/zoom)*(1-on/${D})`, y: centro.y }
+  }
+  if (modo === 'pan-u') {
+    return { z: '1.35', x: centro.x, y: `(ih-ih/zoom)*(1-on/${D})` }
+  }
+  if (modo === 'pan-d') {
+    return { z: '1.35', x: centro.x, y: `(ih-ih/zoom)*(on/${D})` }
+  }
+  return { z: `min(1+${zmax}*on/${D},1.5)`, ...centro }
+}
+
+const TRANSICOES = {
+  fade: 'fade',
+  slide: 'slideleft',
+  wipe: 'wipeleft',
+  circle: 'circleopen',
+  dissolve: 'dissolve',
+}
+
+const FILTROS = {
+  cinema: 'curves=preset=medium_contrast,eq=contrast=1.08:saturation=0.88:brightness=0.015,vignette=PI/5',
+  vibrante: 'eq=saturation=1.35:contrast=1.12:brightness=0.02',
+  quente: 'colorbalance=rs=0.07:ms=0.03:bs=-0.06',
+  frio: 'colorbalance=rs=-0.06:ms=-0.03:bs=0.08',
 }
 
 export async function renderProjeto(body) {
@@ -179,8 +216,6 @@ export async function renderProjeto(body) {
     // 5) Duração total
     const tituloDur = projeto.tituloSlide !== false ? TITULO_DUR : 0
     const n = fotos.length
-    const base = tituloDur + n * segundosFoto
-    const total = Math.max(base, narrDur > 0 ? narrDur + 1 : 0, musDur)
 
     // 6) Fontes
     const dir = path.dirname(fileURLToPath(import.meta.url))
@@ -194,7 +229,6 @@ export async function renderProjeto(body) {
     if (arqMus) inputs.push('-i', arqMus)
 
     const fc = []
-    const mapaV = []
     let idxNarr = -1
     let idxMus = -1
     if (arqNarr) idxNarr = n
@@ -228,25 +262,41 @@ export async function renderProjeto(body) {
           )
         }
       }
-      fc.push('[gt0]' + (titleFilters.length ? titleFilters.join(',') + ',' : '') + `fade=t=out:st=${Math.max(0, tituloDur - 0.5)}:d=0.5,format=yuv420p[titlev]`)
-      mapaV.push('[titlev]')
+      fc.push('[gt0]' + (titleFilters.length ? titleFilters.join(',') + ',' : '') + `settb=AVTB,format=yuv420p[titlev]`)
     }
 
-    // --- Fotos com zoom ---
+    // --- Fotos com movimento (Ken Burns variado) ---
     const durFrames = Math.round(segundosFoto * FPS)
-    const fadeIn = 0.35
-    const fadeOut = 0.35
     for (let i = 0; i < n; i++) {
       const escala = modo === 'cobrir' ? 'increase' : 'decrease'
+      const mot = montarMotion(zoom, durFrames, i)
       let chain = `[${i}:v]scale=${W * 2}:${H * 2}:force_original_aspect_ratio=${escala},setsar=1`
       if (modo === 'caber') chain += `,pad=${W * 2}:${H * 2}:(ow-iw)/2:(oh-ih)/2:black`
-      chain += `,crop=${W}:${H},zoompan=z='${montarZ(zoom, durFrames)}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${durFrames}:s=${W}x${H}:fps=${FPS},trim=duration=${segundosFoto},setpts=PTS-STARTPTS,fade=t=in:st=0:d=${fadeIn},fade=t=out:st=${Math.max(0, segundosFoto - fadeOut)}:d=${fadeOut},format=yuv420p[v${i}]`
+      chain += `,crop=${W}:${H},zoompan=z='${mot.z}':x='${mot.x}':y='${mot.y}':d=${durFrames}:s=${W}x${H}:fps=${FPS},trim=duration=${segundosFoto},setpts=PTS-STARTPTS,fps=${FPS},settb=AVTB,format=yuv420p[v${i}]`
       fc.push(chain)
-      mapaV.push(`[v${i}]`)
     }
 
-    // --- Concat ---
-    fc.push(`${mapaV.join('')}concat=n=${mapaV.length}:v=1:a=0[allv]`)
+    // --- Transições (xfade) ---
+    const D = FADE
+    const trans = TRANSICOES[m.transicao] || 'fade'
+    const segs = []
+    if (tituloDur > 0) segs.push({ lbl: 'titlev', dur: tituloDur })
+    for (let i = 0; i < n; i++) segs.push({ lbl: `v${i}`, dur: segundosFoto })
+
+    let labelAtual = segs[0].lbl
+    let O = segs[0].dur
+    let xcount = 0
+    for (let k = 1; k < segs.length; k++) {
+      const s = segs[k]
+      const offset = O - D
+      const out = `xf${xcount}`
+      fc.push(`[${labelAtual}][${s.lbl}]xfade=transition=${trans}:duration=${D}:offset=${offset}[${out}]`)
+      labelAtual = out
+      O = offset + s.dur
+      xcount++
+    }
+    const totalVideo = O
+    const total = Math.max(totalVideo, narrDur > 0 ? narrDur + 1 : 0, musDur)
 
     // --- Decorações sobre o vídeo todo ---
     const decoChain = []
@@ -280,9 +330,10 @@ export async function renderProjeto(body) {
     if (projeto.mostrarTexto !== false) {
       const slides = Array.isArray(projeto.slides) ? projeto.slides : []
       if (slides.length > 0) {
+        const passo = segundosFoto - D
         for (let i = 0; i < n; i++) {
-          const start = tituloDur + i * segundosFoto
-          const end = start + segundosFoto
+          const start = tituloDur + i * passo
+          const end = i < n - 1 ? tituloDur + (i + 1) * passo : total
           decoChain.push(...montarCaption(slides[i] || '', start, end))
         }
       } else if (projeto.legenda) {
@@ -294,7 +345,10 @@ export async function renderProjeto(body) {
       decoChain.push(`drawbox=x=0:y=${H - pbH}:w=${W}:h=${pbH}:color=white@0.25:t=fill`)
       decoChain.push(`drawbox=x=0:y=${H - pbH}:w='in_w*t/${total}':h=${pbH}:color=${corParaFfmpeg(m.accent)}:t=fill`)
     }
-    fc.push('[allv]' + (decoChain.length ? decoChain.join(',') + ',' : '') + 'format=yuv420p[finalv]')
+    const filtro = FILTROS[m.filtro] || ''
+    const fechamento = `fade=t=out:st=${Math.max(0, total - 0.6)}:d=0.6`
+    const meio = [filtro, fechamento, ...decoChain].filter(Boolean).join(',')
+    fc.push(`[${labelAtual}]${meio ? meio + ',' : ''}format=yuv420p[finalv]`)
 
     // --- Áudio ---
     const mapArgs = ['-map', '[finalv]']

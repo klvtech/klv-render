@@ -26,6 +26,8 @@ const r = await renderProjeto({
       captionBg: 'rgba(17,24,39,0.82)',
       captionCor: '#ffffff',
       zoom: 'rapido',
+      transicao: 'slide',
+      filtro: 'vibrante',
       letterbox: false,
       progressBar: true,
       barraTitulo: true,
