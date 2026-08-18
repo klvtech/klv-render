@@ -210,6 +210,14 @@ export async function renderProjeto(body) {
     if (arqNarr) await base64ParaArquivo(projeto.narracaoAudio, arqNarr)
     if (arqMus) await base64ParaArquivo(projeto.musicaAudio, arqMus)
 
+    const overlays = Array.isArray(projeto.overlays) ? projeto.overlays : []
+    const arqOverlays = []
+    for (let i = 0; i < overlays.length; i++) {
+      const o = overlays[i]
+      if (!o || !o.url) continue
+      arqOverlays.push({ ...o, arquivo: await baixar(o.url, path.join(tmp, `ovl${i}.png`)) })
+    }
+
     const narrDur = arqNarr ? await duracaoAudio(arqNarr) : 0
     const musDur = arqMus ? await duracaoAudio(arqMus) : 0
 
@@ -225,14 +233,16 @@ export async function renderProjeto(body) {
     // 7) Áudio
     const inputs = []
     for (const f of arqFotos) inputs.push('-i', f)
+    for (const o of arqOverlays) inputs.push('-i', o.arquivo)
     if (arqNarr) inputs.push('-i', arqNarr)
     if (arqMus) inputs.push('-i', arqMus)
 
     const fc = []
     let idxNarr = -1
     let idxMus = -1
-    if (arqNarr) idxNarr = n
-    if (arqMus) idxMus = n + (arqNarr ? 1 : 0)
+    const ovlBase = n + arqOverlays.length
+    if (arqNarr) idxNarr = ovlBase
+    if (arqMus) idxMus = ovlBase + (arqNarr ? 1 : 0)
 
     // --- Slide de título ---
     if (tituloDur > 0) {
@@ -247,7 +257,7 @@ export async function renderProjeto(body) {
         const lh = tituloSize * 1.35
         const startY = H / 2 - (linhas.length * lh) / 2
         titleFilters.push(
-          `drawtext=fontfile=${escF(fonteBold)}:text=${escF(linhas.join('\n'))}:fontsize=${tituloSize}:fontcolor=white:line_spacing=${Math.round(lh)}:x=(w-text_w)/2:y=${Math.round(startY)}`
+          `drawtext=fontfile=${escF(fonteBold)}:text=${escF(linhas.join('\n'))}:fontsize=${tituloSize}:fontcolor=white:line_spacing=${Math.round(lh)}:x=(w-text_w)/2:y='${Math.round(startY)} + (1-min(1,t/0.5))*40':alpha='min(1,t/0.5)'`
         )
         if (barraTitulo) {
           const bl = Math.min(220, W * 0.5)
@@ -258,7 +268,7 @@ export async function renderProjeto(body) {
         if (projeto.subtitulo) {
           const subY = startY + linhas.length * lh + (barraTitulo ? 66 : 44)
           titleFilters.push(
-            `drawtext=fontfile=${escF(fonteNormal)}:text=${escF(String(projeto.subtitulo))}:fontsize=${subSize}:fontcolor=${corParaFfmpeg(m.subCor || '#cbd5e1')}:x=(w-text_w)/2:y=${Math.round(subY)}`
+            `drawtext=fontfile=${escF(fonteNormal)}:text=${escF(String(projeto.subtitulo))}:fontsize=${subSize}:fontcolor=${corParaFfmpeg(m.subCor || '#cbd5e1')}:x=(w-text_w)/2:y='${Math.round(subY)} + (1-min(1,t/0.7))*30':alpha='min(1,(t-0.12)/0.55)'`
           )
         }
       }
@@ -321,9 +331,17 @@ export async function renderProjeto(body) {
       }
       const en = `enable='between(t,${start},${end})'`
       const alpha = `alpha='if(lt(t,${start + fadeDur}),0,min(1,(t-${start})/${fadeDur}))'`
+      const baseY = Math.round(boxY + pad + textoSize * 0.36)
+      const yExpr = `'${baseY} + (1-min(1,(t-${start})/${fadeDur}))*36'`
+      const borda = m.bordaTexto
+        ? `:borderw=${Number(m.bordaTamanho) || 3}:bordercolor=${corParaFfmpeg(m.bordaCor || '#000000')}`
+        : ''
+      const sombra = m.sombraTexto
+        ? `:shadowcolor=${corParaFfmpeg(m.sombraCor || '#000000')}:shadowx=${Number(m.sombraDesloc) || 2}:shadowy=${Number(m.sombraDesloc) || 2}`
+        : ''
       return [
         `drawbox=x=45:y=${boxY}:w=${W - 90}:h=${boxH}:color=${corParaFfmpeg(m.captionBg || 'rgba(0,0,0,0.7)')}:t=fill:${en}`,
-        `drawtext=fontfile=${escF(fonteBold)}:text=${escF(linhas.join('\n'))}:fontsize=${textoSize}:fontcolor=${corParaFfmpeg(m.captionCor || '#ffffff')}:line_spacing=${lh}:x=(w-text_w)/2:y=${Math.round(boxY + pad + textoSize * 0.36)}:${alpha}:${en}`,
+        `drawtext=fontfile=${escF(fonteBold)}:text=${escF(linhas.join('\n'))}:fontsize=${textoSize}:fontcolor=${corParaFfmpeg(m.captionCor || '#ffffff')}:line_spacing=${lh}:x=(w-text_w)/2:y=${yExpr}${borda}${sombra}:${alpha}:${en}`,
       ]
     }
 
@@ -350,8 +368,21 @@ export async function renderProjeto(body) {
     const meio = [filtro, fechamento, ...decoChain].filter(Boolean).join(',')
     fc.push(`[${labelAtual}]${meio ? meio + ',' : ''}format=yuv420p[finalv]`)
 
+    // --- Overlays (stickers/logo) ---
+    let labelFinal = 'finalv'
+    for (let i = 0; i < arqOverlays.length; i++) {
+      const o = arqOverlays[i]
+      const ow = Math.max(40, Math.round((o.w || 0.3) * W))
+      const oh = o.h ? Math.round(o.h * H) : -2
+      const opac = o.opacidade ? `,colorchannelmixer=aa=${Number(o.opacidade)}` : ''
+      fc.push(`[${n + i}:v]scale=${ow}:${oh},format=rgba${opac}[ov${i}]`)
+      const fim = o.fim != null ? Number(o.fim) : total
+      fc.push(`[${labelFinal}][ov${i}]overlay=x=${Math.round((o.x || 0.5) * W)}:y=${Math.round((o.y || 0.5) * H)}:enable='between(t,${Number(o.inicio) || 0},${fim})'[of${i}]`)
+      labelFinal = `of${i}`
+    }
+
     // --- Áudio ---
-    const mapArgs = ['-map', '[finalv]']
+    const mapArgs = ['-map', `[${labelFinal}]`]
     let audioGraph = null
     if (arqNarr && arqMus) {
       fc.push(`[${idxNarr}:a]atrim=0:${total},asetpts=PTS-STARTPTS,apad,volume=1[na]`)

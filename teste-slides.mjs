@@ -13,6 +13,9 @@ const r = await renderProjeto({
     subtitulo: 'Segurança que funciona',
     legenda: 'Instalação rápida com garantia e suporte.',
     slides: ['Câmeras de alta resolução 24h', 'DVR com acesso pelo celular', 'Alarme integrado e monitoramento'],
+    overlays: [
+      { url: 'https://picsum.photos/400/400?random=9', x: 0.06, y: 0.06, w: 0.18, inicio: 0, fim: 100, opacidade: 0.9 },
+    ],
     fotos: ['https://picsum.photos/800/1200', 'https://picsum.photos/800/1200?random=2', 'https://picsum.photos/800/1200?random=3'],
     mostrarTexto: true,
     modelo: {
@@ -25,6 +28,12 @@ const r = await renderProjeto({
       textoPeso: 900,
       captionBg: 'rgba(17,24,39,0.82)',
       captionCor: '#ffffff',
+      bordaTexto: true,
+      bordaTamanho: 3,
+      bordaCor: '#111827',
+      sombraTexto: true,
+      sombraCor: '#000000',
+      sombraDesloc: 3,
       zoom: 'rapido',
       transicao: 'slide',
       filtro: 'vibrante',
