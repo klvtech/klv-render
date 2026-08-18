@@ -196,12 +196,14 @@ export async function renderProjeto(body) {
     const segundosFoto = Math.max(1, Number(projeto.segundosFoto) || 3)
 
     // 4) Baixar mídias
-    const fotos = projeto.fotos || []
+    const mediaTracks = Array.isArray(projeto.mediaTracks) && projeto.mediaTracks.length ? projeto.mediaTracks : null
+    const fotos = mediaTracks ? mediaTracks.map((t) => t.url) : projeto.fotos || []
     if (fotos.length === 0) throw new Error('Nenhuma foto para renderizar')
     const arqFotos = []
     for (let i = 0; i < fotos.length; i++) {
       arqFotos.push(await baixar(fotos[i], path.join(tmp, `foto${i}.jpg`)))
     }
+    const durs = mediaTracks ? mediaTracks.map((t) => Math.max(1, (Number(t.endSecond) || 0) - (Number(t.startSecond) || 0))) : null
 
     let arqNarr = null
     let arqMus = null
@@ -276,13 +278,14 @@ export async function renderProjeto(body) {
     }
 
     // --- Fotos com movimento (Ken Burns variado) ---
-    const durFrames = Math.round(segundosFoto * FPS)
     for (let i = 0; i < n; i++) {
+      const durFoto = durs ? durs[i] : segundosFoto
+      const durFrames = Math.round(durFoto * FPS)
       const escala = modo === 'cobrir' ? 'increase' : 'decrease'
       const mot = montarMotion(zoom, durFrames, i)
       let chain = `[${i}:v]scale=${W * 2}:${H * 2}:force_original_aspect_ratio=${escala},setsar=1`
       if (modo === 'caber') chain += `,pad=${W * 2}:${H * 2}:(ow-iw)/2:(oh-ih)/2:black`
-      chain += `,crop=${W}:${H},zoompan=z='${mot.z}':x='${mot.x}':y='${mot.y}':d=${durFrames}:s=${W}x${H}:fps=${FPS},trim=duration=${segundosFoto},setpts=PTS-STARTPTS,fps=${FPS},settb=AVTB,format=yuv420p[v${i}]`
+      chain += `,crop=${W}:${H},zoompan=z='${mot.z}':x='${mot.x}':y='${mot.y}':d=${durFrames}:s=${W}x${H}:fps=${FPS},trim=duration=${durFoto},setpts=PTS-STARTPTS,fps=${FPS},settb=AVTB,format=yuv420p[v${i}]`
       fc.push(chain)
     }
 
@@ -291,7 +294,7 @@ export async function renderProjeto(body) {
     const trans = TRANSICOES[m.transicao] || 'fade'
     const segs = []
     if (tituloDur > 0) segs.push({ lbl: 'titlev', dur: tituloDur })
-    for (let i = 0; i < n; i++) segs.push({ lbl: `v${i}`, dur: segundosFoto })
+    for (let i = 0; i < n; i++) segs.push({ lbl: `v${i}`, dur: durs ? durs[i] : segundosFoto })
 
     let labelAtual = segs[0].lbl
     let O = segs[0].dur
@@ -358,6 +361,27 @@ export async function renderProjeto(body) {
         decoChain.push(...montarCaption(projeto.legenda, tituloDur, total))
       }
     }
+    // Trilha de textos (timeline) — posição, animação e horário livres
+    const textTracks = Array.isArray(projeto.textTracks) ? projeto.textTracks : []
+    for (const tt of textTracks) {
+      if (!tt || !tt.content) continue
+      const start = Math.max(0, Number(tt.startSecond) || 0)
+      const end = tt.endSecond != null ? Number(tt.endSecond) : total
+      if (end <= start) continue
+      const x = tt.x != null ? Math.max(0, Math.min(1, Number(tt.x))) : 0.5
+      const y = tt.y != null ? Math.max(0, Math.min(1, Number(tt.y))) : 0.5
+      const size = Math.max(24, Math.round(W * 0.06))
+      const fade = 0.4
+      const linhas = quebrarLinhas(tt.content, Math.floor((W * 0.9) / (size * 0.62)))
+      const lh = Math.round(size * 1.25)
+      const alpha = `alpha='if(lt(t,${start}),0,if(lt(t,${start + fade}),(t-${start})/${fade},if(gt(t,${end - fade}),max(0,(${end}-t)/${fade}),1)))'`
+      const slide = tt.animation === 'slide-up' ? `+(1-min(1,(t-${start})/${fade}))*40` : ''
+      const en = `enable='between(t,${start},${end})'`
+      decoChain.push(
+        `drawtext=fontfile=${escF(fonteBold)}:text=${escF(linhas.join('\n'))}:fontsize=${size}:fontcolor=white:borderw=3:bordercolor=black@0.9:shadowcolor=black@0.7:shadowx=3:shadowy=3:line_spacing=${lh}:x='(w-text_w)*${x}':y='(h-text_h)*${y}${slide}':${alpha}:${en}`
+      )
+    }
+
     if (progressBar) {
       const pbH = 8
       decoChain.push(`drawbox=x=0:y=${H - pbH}:w=${W}:h=${pbH}:color=white@0.25:t=fill`)
