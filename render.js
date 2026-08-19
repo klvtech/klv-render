@@ -29,23 +29,42 @@ function executarFfmpeg(args, onInfo) {
     proc.on('error', (e) => reject(e))
     proc.on('close', (code) => {
       if (code === 0) resolve(stderr)
-      else reject(new Error('ffmpeg falhou com código ' + code))
+      else {
+        const cauda = stderr
+          .split('\n')
+          .map((l) => l.trim())
+          .filter(Boolean)
+          .slice(-6)
+          .join(' | ')
+        reject(new Error(`ffmpeg falhou com código ${code}${cauda ? ' (' + cauda.slice(0, 400) + ')' : ''}`))
+      }
     })
   })
 }
 
 async function detectFfmpegBin() {
-  const candidatos = [process.env.FFMPEG_PATH, 'ffmpeg', ffmpegPath].filter(Boolean)
+  const candidatos = [process.env.FFMPEG_PATH, ffmpegPath, 'ffmpeg'].filter(Boolean)
+  let fallback = ffmpegPath
   for (const bin of candidatos) {
     try {
       const { stdout } = await execFileP(bin, ['-filters'])
-      if (/drawtext/.test(String(stdout))) return bin
+      const filters = String(stdout)
+      if (/gradients/.test(filters) && /drawtext/.test(filters)) return bin
+      if (/drawtext/.test(filters)) fallback = bin
     } catch {}
   }
-  return ffmpegPath
+  return fallback
 }
 
 const ffmpegBin = await detectFfmpegBin()
+const usaGradientes = await (async () => {
+  try {
+    const { stdout } = await execFileP(ffmpegBin, ['-filters'])
+    return /gradients/.test(String(stdout))
+  } catch {
+    return false
+  }
+})()
 
 export async function getFfmpegInfo() {
   try {
@@ -283,7 +302,11 @@ export async function renderProjeto(body, { onProgress } = {}) {
     if (tituloDur > 0) {
       const c0 = hex(m.grad?.[0] || '#0f172a')
       const c1 = hex(m.grad?.[1] || '#334155')
-      fc.push(`gradients=s=${W}x${H}:c0=${c0}:c1=${c1}:d=${tituloDur}:r=${FPS}[gt0]`)
+      if (usaGradientes) {
+        fc.push(`gradients=s=${W}x${H}:c0=${c0}:c1=${c1}:d=${tituloDur}:r=${FPS}[gt0]`)
+      } else {
+        fc.push(`color=c=${c0}:s=${W}x${H}:d=${tituloDur}:r=${FPS}[gt0]`)
+      }
 
       const lumTitulo = (luminanciaHex(m.grad?.[0] || '#0f172a') + luminanciaHex(m.grad?.[1] || '#334155')) / 2
       const tituloEscuro = lumTitulo > 0.6
