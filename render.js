@@ -1,4 +1,4 @@
-import { execFile } from 'child_process'
+import { execFile, spawn } from 'child_process'
 import { promisify } from 'util'
 import fs from 'fs/promises'
 import os from 'os'
@@ -11,6 +11,28 @@ const execFileP = promisify(execFile)
 const FPS = 30
 const FADE = 0.5
 const TITULO_DUR = 2.5
+
+function executarFfmpeg(args, onInfo) {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(ffmpegBin, args)
+    let stderr = ''
+    proc.stderr.on('data', (buf) => {
+      stderr += buf.toString()
+      const m = /time=(\d+):(\d+):(\d+\.?\d*)/.exec(stderr)
+      if (m && onInfo) {
+        const h = +m[1]
+        const mi = +m[2]
+        const s = +m[3]
+        onInfo({ segundos: h * 3600 + mi * 60 + s })
+      }
+    })
+    proc.on('error', (e) => reject(e))
+    proc.on('close', (code) => {
+      if (code === 0) resolve(stderr)
+      else reject(new Error('ffmpeg falhou com código ' + code))
+    })
+  })
+}
 
 async function detectFfmpegBin() {
   const candidatos = [process.env.FFMPEG_PATH, 'ffmpeg', ffmpegPath].filter(Boolean)
@@ -50,6 +72,17 @@ const FORMATOS = {
 function hex(c) {
   const m = /^#([0-9a-f]{6})$/i.exec(String(c || '').trim())
   return m ? '0x' + m[1].toLowerCase() : '0x000000'
+}
+
+function luminanciaHex(c) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(c || '').trim())
+  if (!m) return 0.5
+  const n = parseInt(m[1], 16)
+  const r = ((n >> 16) & 255) / 255
+  const g = ((n >> 8) & 255) / 255
+  const b = (n & 255) / 255
+  const lin = (v) => (v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4))
+  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
 }
 
 // rgba(r,g,b,a) ou hex -> "0xrrggbb@alpha"
@@ -159,7 +192,7 @@ const FILTROS = {
   frio: 'colorbalance=rs=-0.06:ms=-0.03:bs=0.08',
 }
 
-export async function renderProjeto(body) {
+export async function renderProjeto(body, { onProgress } = {}) {
   const { projeto, userJwt, tokenUrl } = body || {}
   if (!projeto) throw new Error('projeto obrigatório')
   if (!userJwt || !tokenUrl) throw new Error('userJwt e tokenUrl obrigatórios')
@@ -252,6 +285,11 @@ export async function renderProjeto(body) {
       const c1 = hex(m.grad?.[1] || '#334155')
       fc.push(`gradients=s=${W}x${H}:c0=${c0}:c1=${c1}:d=${tituloDur}:r=${FPS}[gt0]`)
 
+      const lumTitulo = (luminanciaHex(m.grad?.[0] || '#0f172a') + luminanciaHex(m.grad?.[1] || '#334155')) / 2
+      const tituloEscuro = lumTitulo > 0.6
+      const corTitulo = tituloEscuro ? '0x0f172a' : 'white'
+      const corSubT = m.subCor ? corParaFfmpeg(m.subCor) : corParaFfmpeg(tituloEscuro ? '#475569' : '#cbd5e1')
+
       const titleFilters = []
       const titulo = projeto.titulo
       if (titulo) {
@@ -259,7 +297,7 @@ export async function renderProjeto(body) {
         const lh = tituloSize * 1.35
         const startY = H / 2 - (linhas.length * lh) / 2
         titleFilters.push(
-          `drawtext=fontfile=${escF(fonteBold)}:text=${escF(linhas.join('\n'))}:fontsize=${tituloSize}:fontcolor=white:line_spacing=${Math.round(lh)}:x=(w-text_w)/2:y='${Math.round(startY)} + (1-min(1,t/0.5))*40':alpha='min(1,t/0.5)'`
+          `drawtext=fontfile=${escF(fonteBold)}:text=${escF(linhas.join('\n'))}:fontsize=${tituloSize}:fontcolor=${corTitulo}:line_spacing=${Math.round(lh)}:x=(w-text_w)/2:y='${Math.round(startY)} + (1-min(1,t/0.5))*40':alpha='min(1,t/0.5)'`
         )
         if (barraTitulo) {
           const bl = Math.min(220, W * 0.5)
@@ -270,7 +308,7 @@ export async function renderProjeto(body) {
         if (projeto.subtitulo) {
           const subY = startY + linhas.length * lh + (barraTitulo ? 66 : 44)
           titleFilters.push(
-            `drawtext=fontfile=${escF(fonteNormal)}:text=${escF(String(projeto.subtitulo))}:fontsize=${subSize}:fontcolor=${corParaFfmpeg(m.subCor || '#cbd5e1')}:x=(w-text_w)/2:y='${Math.round(subY)} + (1-min(1,t/0.7))*30':alpha='min(1,(t-0.12)/0.55)'`
+            `drawtext=fontfile=${escF(fonteNormal)}:text=${escF(String(projeto.subtitulo))}:fontsize=${subSize}:fontcolor=${corSubT}:x=(w-text_w)/2:y='${Math.round(subY)} + (1-min(1,t/0.7))*30':alpha='min(1,(t-0.12)/0.55)'`
           )
         }
       }
@@ -342,9 +380,13 @@ export async function renderProjeto(body) {
       const sombra = m.sombraTexto
         ? `:shadowcolor=${corParaFfmpeg(m.sombraCor || '#000000')}:shadowx=${Number(m.sombraDesloc) || 2}:shadowy=${Number(m.sombraDesloc) || 2}`
         : ''
+      const captionBg = m.captionBg || 'rgba(0,0,0,0.7)'
+      const captionBgHex = /^#?[0-9a-f]{6}$/i.test(String(captionBg).trim()) ? String(captionBg).trim() : null
+      const lumBg = captionBgHex ? luminanciaHex(captionBgHex) : 0
+      const captionCor = m.captionCor ? corParaFfmpeg(m.captionCor) : corParaFfmpeg(lumBg > 0.6 ? '#0f172a' : '#ffffff')
       return [
-        `drawbox=x=45:y=${boxY}:w=${W - 90}:h=${boxH}:color=${corParaFfmpeg(m.captionBg || 'rgba(0,0,0,0.7)')}:t=fill:${en}`,
-        `drawtext=fontfile=${escF(fonteBold)}:text=${escF(linhas.join('\n'))}:fontsize=${textoSize}:fontcolor=${corParaFfmpeg(m.captionCor || '#ffffff')}:line_spacing=${lh}:x=(w-text_w)/2:y=${yExpr}${borda}${sombra}:${alpha}:${en}`,
+        `drawbox=x=45:y=${boxY}:w=${W - 90}:h=${boxH}:color=${corParaFfmpeg(captionBg)}:t=fill:${en}`,
+        `drawtext=fontfile=${escF(fonteBold)}:text=${escF(linhas.join('\n'))}:fontsize=${textoSize}:fontcolor=${captionCor}:line_spacing=${lh}:x=(w-text_w)/2:y=${yExpr}${borda}${sombra}:${alpha}:${en}`,
       ]
     }
 
@@ -433,8 +475,10 @@ export async function renderProjeto(body) {
       '-filter_complex', filterArg,
       ...mapArgs,
       '-c:v', 'libx264',
-      '-preset', 'medium',
+      '-preset', 'veryfast',
       '-crf', '20',
+      '-maxrate', '8M',
+      '-bufsize', '16M',
       '-r', String(FPS),
       '-t', String(total),
       '-pix_fmt', 'yuv420p',
@@ -443,7 +487,8 @@ export async function renderProjeto(body) {
       saida,
     ]
 
-    const { stderr } = await execFileP(ffmpegBin, args, { maxBuffer: 50 * 1024 * 1024 })
+    onProgress?.({ segundos: 0, duracao: total })
+    const { stderr } = await executarFfmpeg(args, (info) => onProgress?.({ ...info, duracao: total }))
     const ultima = (stderr || '').split('\n').filter((l) => l.includes('frame=')).pop() || ''
 
     // --- Envia pro Drive ---
