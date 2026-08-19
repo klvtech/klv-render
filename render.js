@@ -272,8 +272,12 @@ export async function renderProjeto(body, { onProgress } = {}) {
       arqOverlays.push({ ...o, arquivo: await baixar(o.url, path.join(tmp, `ovl${i}.png`)) })
     }
 
-    const narrDur = arqNarr ? await duracaoAudio(arqNarr) : 0
-    const musDur = arqMus ? await duracaoAudio(arqMus) : 0
+    const narrDurRaw = arqNarr ? await duracaoAudio(arqNarr) : 0
+    const musDurRaw = arqMus ? await duracaoAudio(arqMus) : 0
+    if (arqNarr && narrDurRaw === 0) arqNarr = null
+    if (arqMus && musDurRaw === 0) arqMus = null
+    const narrDur = arqNarr ? narrDurRaw : 0
+    const musDur = arqMus ? musDurRaw : 0
 
     // 5) Duração total
     const tituloDur = projeto.tituloSlide !== false ? TITULO_DUR : 0
